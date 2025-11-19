@@ -31,12 +31,16 @@ type sessionsData struct {
 	dbmsbytesall        int64
 	callsall            int64
 	sessionid           string
+	startedAt           int64
+	lastActiveAt        int64
 }
 
 type ExporterSessionsMemory struct {
 	ExporterSessions
 
-	buff map[string]*sessionsData
+	buff           map[string]*sessionsData
+	startedAtGauge *prometheus.GaugeVec
+	lastActiveAtGauge *prometheus.GaugeVec
 }
 
 func (exp *ExporterSessionsMemory) Construct(s *settings.Settings) *ExporterSessionsMemory {
@@ -54,21 +58,41 @@ func (exp *ExporterSessionsMemory) Construct(s *settings.Settings) *ExporterSess
 		[]string{"host", "base", "user", "id", "datatype", "appid"},
 	)
 
+	exp.startedAtGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "session_start_timestamp",
+			Help: "Timestamp when the 1C session started",
+		},
+		[]string{"host", "base", "user", "id", "appid"},
+	)
+	exp.lastActiveAtGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "session_last_active_timestamp",
+			Help: "Timestamp of last activity in the 1C session",
+		},
+		[]string{"host", "base", "user", "id", "appid"},
+	)
+
 	exp.buff = map[string]*sessionsData{}
 	exp.settings = s
 	exp.ExporterCheckSheduleJob.settings = s
 	exp.cache = expirable.NewLRU[string, []map[string]string](5, nil, time.Second*5)
-	go exp.fillBaseList() // в данном экспортере нужен список баз
+	go exp.fillBaseList() // требуется список баз
 
-	// эта метрика содержит показатели memory-current, write-current и прочие current
-	// прометей может приходить за данными довольно редко, раз в 15 секунд, или раз в минуту, как правило серверный вызов 1С проходит быстрее и такие показатели не будут прочитаны
-	// показатели нужно собирать довольно часто, чаще чем приходит прометей за данными, их просто накапливаем в буфер, потом отдаем прометею когда он придет
 	go exp.collectingMetrics(time.Second * 5)
 
 	return exp
 }
 
+func atoi(n string) int64 {
+	if v, err := strconv.ParseInt(n, 10, 64); err == nil {
+		return v
+	}
+	return 0
+}
+
 func (exp *ExporterSessionsMemory) collectingMetrics(delay time.Duration) {
+	layout := "2006-01-02T15:04:05"
 	for {
 		ses, _ := exp.getSessions()
 		for _, item := range ses {
@@ -93,6 +117,14 @@ func (exp *ExporterSessionsMemory) collectingMetrics(delay time.Duration) {
 			callsall, _ := item["calls-all"]
 			sessionid, _ := item["session-id"]
 
+			var startedAtUnix, lastActiveAtUnix int64
+			if startedAt, err := time.Parse(layout, item["started-at"]); err == nil {
+				startedAtUnix = startedAt.Unix()
+			}
+			if lastActiveAt, err := time.Parse(layout, item["last-active-at"]); err == nil {
+				lastActiveAtUnix = lastActiveAt.Unix()
+			}
+
 			exp.mx.Lock()
 			if v, ok := exp.buff[sessionid]; !ok {
 				exp.buff[sessionid] = &sessionsData{
@@ -114,6 +146,8 @@ func (exp *ExporterSessionsMemory) collectingMetrics(delay time.Duration) {
 					dbmsbytesall:        atoi(dbmsbytesall),
 					callsall:            atoi(callsall),
 					sessionid:           sessionid,
+					startedAt:           startedAtUnix,
+					lastActiveAt:        lastActiveAtUnix,
 				}
 			} else {
 				v.memorycurrent = int64(math.Max(float64(v.memorycurrent), float64(atoi(memorycurrent))))
@@ -130,6 +164,8 @@ func (exp *ExporterSessionsMemory) collectingMetrics(delay time.Duration) {
 				v.readtotal = atoi(readtotal)
 				v.memorytotal = atoi(memorytotal)
 				v.callsall = atoi(callsall)
+				v.startedAt = startedAtUnix
+				v.lastActiveAt = lastActiveAtUnix
 				exp.buff[sessionid] = v
 			}
 			exp.mx.Unlock()
@@ -141,14 +177,6 @@ func (exp *ExporterSessionsMemory) collectingMetrics(delay time.Duration) {
 			return
 		}
 	}
-}
-
-func atoi(n string) int64 {
-	if v, err := strconv.ParseInt(n, 10, 64); err == nil {
-		return v
-	}
-
-	return 0
 }
 
 func (exp *ExporterSessionsMemory) getValue() {
@@ -173,6 +201,8 @@ func (exp *ExporterSessionsMemory) getValue() {
 		exp.summary.WithLabelValues(exp.host, v.basename, v.user, v.sessionid, "cputimetotal", v.appid).Observe(float64(v.cputimetotal))
 		exp.summary.WithLabelValues(exp.host, v.basename, v.user, v.sessionid, "dbmsbytesall", v.appid).Observe(float64(v.dbmsbytesall))
 		exp.summary.WithLabelValues(exp.host, v.basename, v.user, v.sessionid, "callsall", v.appid).Observe(float64(v.callsall))
+		exp.summary.WithLabelValues(exp.host, v.basename, v.user, v.sessionid, "started-at", v.appid).Observe(float64(v.startedAt))
+		exp.summary.WithLabelValues(exp.host, v.basename, v.user, v.sessionid, "last-active-at", v.appid).Observe(float64(v.lastActiveAt))
 
 		delete(exp.buff, k)
 	}
