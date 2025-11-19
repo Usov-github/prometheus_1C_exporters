@@ -55,29 +55,50 @@ func (exp *ExporterSessionsMemory) Construct(s *settings.Settings) *ExporterSess
 		[]string{"host", "base", "user", "id", "datatype", "appid"},
 	)
 
-	exp.buff = make(map[string]*sessionsData)
+	exp.buff = map[string]*sessionsData{}
 	exp.settings = s
 	exp.ExporterCheckSheduleJob.settings = s
-	exp.cache = expirable.NewLRU[string, []map[string]string](5, nil, 5*time.Second)
+	exp.cache = expirable.NewLRU[string, []map[string]string](5, nil, time.Second*5)
 	go exp.fillBaseList()
-	go exp.collectingMetrics(5 * time.Second)
+
+	go exp.collectingMetrics(time.Second * 5)
 
 	return exp
 }
 
-func atoi(s string) int64 {
-	if v, err := strconv.ParseInt(s, 10, 64); err == nil {
+func atoi(n string) int64 {
+	if v, err := strconv.ParseInt(n, 10, 64); err == nil {
 		return v
 	}
+
 	return 0
 }
 
 func (exp *ExporterSessionsMemory) collectingMetrics(delay time.Duration) {
 	layout := "2006-01-02T15:04:05"
 	for {
-		sessions, _ := exp.getSessions()
-		for _, item := range sessions {
-			sessionid := item["session-id"]
+		ses, _ := exp.getSessions()
+		for _, item := range ses {
+			appid, _ := item["app-id"]
+			user, _ := item["user-name"]
+			memorytotal, _ := item["memory-total"]
+			memorycurrent, _ := item["memory-current"]
+			readcurrent, _ := item["read-current"]
+			readtotal, _ := item["read-total"]
+			writecurrent, _ := item["write-current"]
+			writetotal, _ := item["write-total"]
+			durationcurrent, _ := item["duration-current"]
+			durationcurrentdbms, _ := item["duration-current-dbms"]
+			if durationcurrentdbms == "" {
+				durationcurrentdbms, _ = item["duration current-dbms"]
+			}
+			durationall, _ := item["duration-all"]
+			durationalldbms, _ := item["duration-all-dbms"]
+			cputimecurrent, _ := item["cpu-time-current"]
+			cputimetotal, _ := item["cpu-time-total"]
+			dbmsbytesall, _ := item["dbms-bytes-all"]
+			callsall, _ := item["calls-all"]
+			sessionid, _ := item["session-id"]
 
 			var startedAtUnix int64
 			if startedAt, err := time.Parse(layout, item["started-at"]); err == nil {
@@ -85,49 +106,48 @@ func (exp *ExporterSessionsMemory) collectingMetrics(delay time.Duration) {
 			}
 
 			exp.mx.Lock()
-			v, ok := exp.buff[sessionid]
-			if !ok {
-				v = &sessionsData{
+			if v, ok := exp.buff[sessionid]; !ok {
+				exp.buff[sessionid] = &sessionsData{
 					basename:            exp.findBaseName(item["infobase"]),
-					appid:               item["app-id"],
-					user:                item["user-name"],
-					memorytotal:         atoi(item["memory-total"]),
-					memorycurrent:       atoi(item["memory-current"]),
-					readcurrent:         atoi(item["read-current"]),
-					readtotal:           atoi(item["read-total"]),
-					writecurrent:        atoi(item["write-current"]),
-					writetotal:          atoi(item["write-total"]),
-					durationcurrent:     atoi(item["duration-current"]),
-					durationcurrentdbms: atoi(item["duration-current-dbms"]),
-					durationall:         atoi(item["duration-all"]),
-					durationalldbms:     atoi(item["duration-all-dbms"]),
-					cputimecurrent:      atoi(item["cpu-time-current"]),
-					cputimetotal:        atoi(item["cpu-time-total"]),
-					dbmsbytesall:        atoi(item["dbms-bytes-all"]),
-					callsall:            atoi(item["calls-all"]),
+					appid:               appid,
+					user:                user,
+					memorytotal:         atoi(memorytotal),
+					memorycurrent:       atoi(memorycurrent),
+					readcurrent:         atoi(readcurrent),
+					readtotal:           atoi(readtotal),
+					writecurrent:        atoi(writecurrent),
+					writetotal:          atoi(writetotal),
+					durationcurrent:     atoi(durationcurrent),
+					durationcurrentdbms: atoi(durationcurrentdbms),
+					durationall:         atoi(durationall),
+					durationalldbms:     atoi(durationalldbms),
+					cputimecurrent:      atoi(cputimecurrent),
+					cputimetotal:        atoi(cputimetotal),
+					dbmsbytesall:        atoi(dbmsbytesall),
+					callsall:            atoi(callsall),
 					sessionid:           sessionid,
 					startedAt:           startedAtUnix,
 				}
-				exp.buff[sessionid] = v
 			} else {
-				v.memorycurrent = int64(math.Max(float64(v.memorycurrent), float64(atoi(item["memory-current"]))))
-				v.readcurrent = int64(math.Max(float64(v.readcurrent), float64(atoi(item["read-current"]))))
-				v.cputimecurrent = int64(math.Max(float64(v.cputimecurrent), float64(atoi(item["cpu-time-current"]))))
-				v.durationcurrentdbms = int64(math.Max(float64(v.durationcurrentdbms), float64(atoi(item["duration-current-dbms"]))))
-				v.durationcurrent = int64(math.Max(float64(v.durationcurrent), float64(atoi(item["duration-current"]))))
-				v.writecurrent = int64(math.Max(float64(v.writecurrent), float64(atoi(item["write-current"]))))
-				v.dbmsbytesall = atoi(item["dbms-bytes-all"])
-				v.cputimetotal = atoi(item["cpu-time-total"])
-				v.durationalldbms = atoi(item["duration-all-dbms"])
-				v.durationall = atoi(item["duration-all"])
-				v.writetotal = atoi(item["writetotal"])
-				v.readtotal = atoi(item["read-total"])
-				v.memorytotal = atoi(item["memory-total"])
-				v.callsall = atoi(item["calls-all"])
-				v.startedAt = startedAtUnix
+				v.memorycurrent = int64(math.Max(float64(v.memorycurrent), float64(atoi(memorycurrent))))
+				v.readcurrent = int64(math.Max(float64(v.readcurrent), float64(atoi(readcurrent))))
+				v.cputimecurrent = int64(math.Max(float64(v.cputimecurrent), float64(atoi(cputimecurrent))))
+				v.durationcurrentdbms = int64(math.Max(float64(v.durationcurrentdbms), float64(atoi(durationcurrentdbms))))
+				v.durationcurrent = int64(math.Max(float64(v.durationcurrent), float64(atoi(durationcurrent))))
+				v.writecurrent = int64(math.Max(float64(v.writecurrent), float64(atoi(writecurrent))))
+				v.dbmsbytesall = atoi(dbmsbytesall)
+				v.cputimetotal = atoi(cputimetotal)
+				v.durationalldbms = atoi(durationalldbms)
+				v.durationall = atoi(durationall)
+				v.writetotal = atoi(writetotal)
+				v.readtotal = atoi(readtotal)
+				v.memorytotal = atoi(memorytotal)
+				v.callsall = atoi(callsall)
+				exp.buff[sessionid] = v
 			}
 			exp.mx.Unlock()
 		}
+
 		select {
 		case <-time.After(delay):
 		case <-exp.ctx.Done():
@@ -143,7 +163,7 @@ func (exp *ExporterSessionsMemory) getValue() {
 	defer exp.mx.Unlock()
 
 	exp.summary.Reset()
-	for _, v := range exp.buff {
+	for k, v := range exp.buff {
 		exp.summary.WithLabelValues(exp.host, v.basename, v.user, v.sessionid, "memorytotal", v.appid).Observe(float64(v.memorytotal))
 		exp.summary.WithLabelValues(exp.host, v.basename, v.user, v.sessionid, "memorycurrent", v.appid).Observe(float64(v.memorycurrent))
 		exp.summary.WithLabelValues(exp.host, v.basename, v.user, v.sessionid, "readcurrent", v.appid).Observe(float64(v.readcurrent))
@@ -158,9 +178,9 @@ func (exp *ExporterSessionsMemory) getValue() {
 		exp.summary.WithLabelValues(exp.host, v.basename, v.user, v.sessionid, "cputimetotal", v.appid).Observe(float64(v.cputimetotal))
 		exp.summary.WithLabelValues(exp.host, v.basename, v.user, v.sessionid, "dbmsbytesall", v.appid).Observe(float64(v.dbmsbytesall))
 		exp.summary.WithLabelValues(exp.host, v.basename, v.user, v.sessionid, "callsall", v.appid).Observe(float64(v.callsall))
-		// Выводим startedAt как числовое значение Unix timestamp
 		exp.summary.WithLabelValues(exp.host, v.basename, v.user, v.sessionid, "startedat", v.appid).Observe(float64(v.startedAt))
-		delete(exp.buff, v.sessionid)
+
+		delete(exp.buff, k)
 	}
 }
 
@@ -168,6 +188,7 @@ func (exp *ExporterSessionsMemory) Collect(ch chan<- prometheus.Metric) {
 	if exp.isLocked.Load() {
 		return
 	}
+
 	exp.getValue()
 	exp.summary.Collect(ch)
 }
