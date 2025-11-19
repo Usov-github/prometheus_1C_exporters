@@ -70,7 +70,6 @@ func atoi(n string) int64 {
 	if v, err := strconv.ParseInt(n, 10, 64); err == nil {
 		return v
 	}
-
 	return 0
 }
 
