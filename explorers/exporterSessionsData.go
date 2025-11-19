@@ -3,6 +3,7 @@ package exporter
 import (
 	"math"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/LazarenkoA/prometheus_1C_exporter/explorers/model"
@@ -12,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// Интерфейс для легче мокирования SummaryVec
 type SummaryVecInterface interface {
 	prometheus.Collector
 	WithLabelValues(lvs ...string) prometheus.Observer
@@ -43,6 +45,7 @@ type sessionsData struct {
 type ExporterSessionsMemory struct {
 	ExporterSessions
 
+	mx             sync.RWMutex
 	buff           map[string]*sessionsData
 	summary        SummaryVecInterface
 	startedAtGauge *prometheus.GaugeVec
@@ -93,7 +96,11 @@ func atoi(n string) int64 {
 func (exp *ExporterSessionsMemory) collectingMetrics(delay time.Duration) {
 	layout := "2006-01-02T15:04:05"
 	for {
-		sessions, _ := exp.getSessions()
+		sessions, err := exp.getSessions()
+		if err != nil {
+			exp.logger.Error(err)
+			continue
+		}
 
 		for _, item := range sessions {
 			sessionid := item["session-id"]
