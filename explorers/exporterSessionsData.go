@@ -12,6 +12,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+type SummaryVecInterface interface {
+	prometheus.Collector
+	WithLabelValues(lvs ...string) prometheus.Observer
+	Reset()
+}
+
 type sessionsData struct {
 	basename            string
 	appid               string
@@ -38,7 +44,7 @@ type ExporterSessionsMemory struct {
 	ExporterSessions
 
 	buff           map[string]*sessionsData
-	summary        *prometheus.SummaryVec
+	summary        SummaryVecInterface
 	startedAtGauge *prometheus.GaugeVec
 }
 
@@ -47,7 +53,7 @@ func (exp *ExporterSessionsMemory) Construct(s *settings.Settings) *ExporterSess
 	exp.logger.Info("Создание объекта")
 
 	prefix := s.GetMetricNamePrefix()
-	exp.summary = prometheus.NewSummaryVec(
+	realSummary := prometheus.NewSummaryVec(
 		prometheus.SummaryOpts{
 			Name:        prefix + exp.GetName(),
 			Help:        "Показатели сессий из кластера 1С",
@@ -56,6 +62,8 @@ func (exp *ExporterSessionsMemory) Construct(s *settings.Settings) *ExporterSess
 		},
 		[]string{"host", "base", "user", "id", "datatype", "appid"},
 	)
+
+	exp.summary = realSummary
 
 	exp.startedAtGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -85,11 +93,7 @@ func atoi(n string) int64 {
 func (exp *ExporterSessionsMemory) collectingMetrics(delay time.Duration) {
 	layout := "2006-01-02T15:04:05"
 	for {
-		sessions, err := exp.getSessions()
-		if err != nil {
-			exp.logger.Error(err)
-			continue
-		}
+		sessions, _ := exp.getSessions()
 
 		for _, item := range sessions {
 			sessionid := item["session-id"]
@@ -99,8 +103,8 @@ func (exp *ExporterSessionsMemory) collectingMetrics(delay time.Duration) {
 			}
 
 			exp.mx.Lock()
-			v, found := exp.buff[sessionid]
-			if !found {
+			v, ok := exp.buff[sessionid]
+			if !ok {
 				v = &sessionsData{
 					basename:            exp.findBaseName(item["infobase"]),
 					appid:               item["app-id"],
@@ -177,7 +181,7 @@ func (exp *ExporterSessionsMemory) getValue() {
 		exp.startedAtGauge.WithLabelValues(exp.host, v.basename, v.user, v.sessionid, v.appid).Set(float64(v.startedAt))
 	}
 
-	exp.buff = make(map[string]*sessionsData) // очистка буфера
+	exp.buff = make(map[string]*sessionsData)
 }
 
 func (exp *ExporterSessionsMemory) Collect(ch chan<- prometheus.Metric) {
