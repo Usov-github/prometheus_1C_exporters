@@ -37,7 +37,8 @@ type sessionsData struct {
 type ExporterSessionsMemory struct {
 	ExporterSessions
 
-	buff map[string]*sessionsData
+	buff           map[string]*sessionsData
+	startedAtGauge *prometheus.GaugeVec
 }
 
 func (exp *ExporterSessionsMemory) Construct(s *settings.Settings) *ExporterSessionsMemory {
@@ -53,6 +54,14 @@ func (exp *ExporterSessionsMemory) Construct(s *settings.Settings) *ExporterSess
 			ConstLabels: prometheus.Labels{"ras_host": s.GetRASHostPort()},
 		},
 		[]string{"host", "base", "user", "id", "datatype", "appid"},
+	)
+
+	exp.startedAtGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "session_start_timestamp",
+			Help: "Timestamp when the 1C session started",
+		},
+		[]string{"host", "base", "user", "id", "appid"},
 	)
 
 	exp.buff = map[string]*sessionsData{}
@@ -178,7 +187,7 @@ func (exp *ExporterSessionsMemory) getValue() {
 		exp.summary.WithLabelValues(exp.host, v.basename, v.user, v.sessionid, "cputimetotal", v.appid).Observe(float64(v.cputimetotal))
 		exp.summary.WithLabelValues(exp.host, v.basename, v.user, v.sessionid, "dbmsbytesall", v.appid).Observe(float64(v.dbmsbytesall))
 		exp.summary.WithLabelValues(exp.host, v.basename, v.user, v.sessionid, "callsall", v.appid).Observe(float64(v.callsall))
-		exp.summary.WithLabelValues(exp.host, v.basename, v.user, v.sessionid, "started-at", v.appid).Observe(float64(v.startedAt))
+		exp.summary.WithLabelValues(exp.host, v.basename, v.user, v.sessionid, "startedat", v.appid).Observe(float64(v.startedAt))
 
 		delete(exp.buff, k)
 	}
