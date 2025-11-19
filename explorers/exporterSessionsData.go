@@ -38,9 +38,7 @@ type sessionsData struct {
 type ExporterSessionsMemory struct {
 	ExporterSessions
 
-	buff           map[string]*sessionsData
-	startedAtGauge *prometheus.GaugeVec
-	lastActiveAtGauge *prometheus.GaugeVec
+	buff map[string]*sessionsData
 }
 
 func (exp *ExporterSessionsMemory) Construct(s *settings.Settings) *ExporterSessionsMemory {
@@ -58,26 +56,11 @@ func (exp *ExporterSessionsMemory) Construct(s *settings.Settings) *ExporterSess
 		[]string{"host", "base", "user", "id", "datatype", "appid"},
 	)
 
-	exp.startedAtGauge = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "session_start_timestamp",
-			Help: "Timestamp when the 1C session started",
-		},
-		[]string{"host", "base", "user", "id", "appid"},
-	)
-	exp.lastActiveAtGauge = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "session_last_active_timestamp",
-			Help: "Timestamp of last activity in the 1C session",
-		},
-		[]string{"host", "base", "user", "id", "appid"},
-	)
-
 	exp.buff = map[string]*sessionsData{}
 	exp.settings = s
 	exp.ExporterCheckSheduleJob.settings = s
 	exp.cache = expirable.NewLRU[string, []map[string]string](5, nil, time.Second*5)
-	go exp.fillBaseList() // требуется список баз
+	go exp.fillBaseList()
 
 	go exp.collectingMetrics(time.Second * 5)
 
@@ -94,7 +77,11 @@ func atoi(n string) int64 {
 func (exp *ExporterSessionsMemory) collectingMetrics(delay time.Duration) {
 	layout := "2006-01-02T15:04:05"
 	for {
-		ses, _ := exp.getSessions()
+		ses, err := exp.getSessions()
+		if err != nil {
+			exp.logger.Error(err)
+		}
+
 		for _, item := range ses {
 			appid, _ := item["app-id"]
 			user, _ := item["user-name"]
