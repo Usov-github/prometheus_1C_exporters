@@ -38,6 +38,7 @@ type ExporterSessionsMemory struct {
 	ExporterSessions
 
 	buff           map[string]*sessionsData
+	summary        *prometheus.SummaryVec
 	startedAtGauge *prometheus.GaugeVec
 }
 
@@ -46,6 +47,8 @@ func (exp *ExporterSessionsMemory) Construct(s *settings.Settings) *ExporterSess
 	exp.logger.Info("Создание объекта")
 
 	labelName := s.GetMetricNamePrefix() + exp.GetName()
+
+
 	exp.summary = prometheus.NewSummaryVec(
 		prometheus.SummaryOpts{
 			Name:        labelName,
@@ -69,7 +72,6 @@ func (exp *ExporterSessionsMemory) Construct(s *settings.Settings) *ExporterSess
 	exp.ExporterCheckSheduleJob.settings = s
 	exp.cache = expirable.NewLRU[string, []map[string]string](5, nil, time.Second*5)
 	go exp.fillBaseList()
-
 	go exp.collectingMetrics(time.Second * 5)
 
 	return exp
@@ -86,6 +88,7 @@ func (exp *ExporterSessionsMemory) collectingMetrics(delay time.Duration) {
 	layout := "2006-01-02T15:04:05"
 	for {
 		ses, _ := exp.getSessions()
+
 		for _, item := range ses {
 			appid, _ := item["app-id"]
 			user, _ := item["user-name"]
@@ -187,8 +190,8 @@ func (exp *ExporterSessionsMemory) getValue() {
 		exp.summary.WithLabelValues(exp.host, v.basename, v.user, v.sessionid, "cputimetotal", v.appid).Observe(float64(v.cputimetotal))
 		exp.summary.WithLabelValues(exp.host, v.basename, v.user, v.sessionid, "dbmsbytesall", v.appid).Observe(float64(v.dbmsbytesall))
 		exp.summary.WithLabelValues(exp.host, v.basename, v.user, v.sessionid, "callsall", v.appid).Observe(float64(v.callsall))
-		exp.summary.WithLabelValues(exp.host, v.basename, v.user, v.sessionid, "startedat", v.appid).Observe(float64(v.startedAt))
 
+		exp.startedAtGauge.WithLabelValues(exp.host, v.basename, v.user, v.sessionid, v.appid).Set(float64(v.startedAt))
 		delete(exp.buff, k)
 	}
 }
@@ -200,6 +203,7 @@ func (exp *ExporterSessionsMemory) Collect(ch chan<- prometheus.Metric) {
 
 	exp.getValue()
 	exp.summary.Collect(ch)
+	exp.startedAtGauge.Collect(ch)
 }
 
 func (exp *ExporterSessionsMemory) GetName() string {
